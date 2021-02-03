@@ -1,5 +1,5 @@
 import numpy as np
-from abtem.potentials import superpose_deltas
+
 from scipy.interpolate import interp1d
 from numbers import Number
 
@@ -16,6 +16,17 @@ def probe_profile(gaussian_width, lorentzian_width, intensity_ratio=.5, n=100):
     profile /= profile.max()
     f = interp1d(x, profile, fill_value=0, bounds_error=False)
     return f
+
+
+def superpose_deltas(positions, z, array):
+    shape = array.shape[-2:]
+    rounded = np.floor(positions).astype(np.int32)
+    rows, cols = rounded[:, 0], rounded[:, 1]
+
+    array[z, rows, cols] += (1 - (positions[:, 0] - rows)) * (1 - (positions[:, 1] - cols))
+    array[z, (rows + 1) % shape[0], cols] += (positions[:, 0] - rows) * (1 - (positions[:, 1] - cols))
+    array[z, rows, (cols + 1) % shape[1]] += (1 - (positions[:, 0] - rows)) * (positions[:, 1] - cols)
+    array[z, (rows + 1) % shape[0], (cols + 1) % shape[1]] += (rows - positions[:, 0]) * (cols - positions[:, 1])
 
 
 def simulate_2d_material(atoms, probe_profile, sampling=None, shape=None, power_law=1.4):
