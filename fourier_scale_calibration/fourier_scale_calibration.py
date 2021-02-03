@@ -57,7 +57,7 @@ def windowed_fft(image):
     return np.fft.fft2(image * m)
 
 
-def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=None, nbins_angular=128,
+def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=None, nbins_angular=None,
                          return_positions=False, normalize=True):
     if symmetry < 2:
         raise RuntimeError('symmetry must be 2 or greater')
@@ -75,6 +75,9 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
 
     if min_scale > max_scale:
         raise RuntimeError('min_scale must be less than max_scale')
+
+    if nbins_angular is None:
+        nbins_angular = int(np.ceil((2 * np.pi / symmetry) / 0.01))
 
     f = np.abs(windowed_fft(image))
     if len(f.shape) == 3:
@@ -96,7 +99,15 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
 
     if normalize:
         unrolled = unrolled / unrolled.mean((2,), keepdims=True)
+
     unrolled = (unrolled).mean(0)
+
+    #print(scales.shape)
+    #print(unrolled.shape)
+    #import matplotlib.pyplot as plt
+    #plt.figure(figsize=(15, 15))
+    #plt.imshow(unrolled)
+    #plt.show()
 
     p = np.unravel_index(np.argmax(unrolled), unrolled.shape)
 
@@ -134,10 +145,11 @@ class FourierSpaceCalibrator:
             template = regular_polygon(1., 6)
             template = np.vstack((template, rotate(template, 30) * np.sqrt(3)))
             symmetry = 6
-        elif self.template.lower() == '12-sided':
-            k = min(image.shape[-2:]) / self.lattice_constant * 2 / np.sqrt(3) / 2
-            template = regular_polygon(1., 12)
-            symmetry = 12
+        elif self.template.lower() == 'ring':
+            k = min(image.shape[-2:]) / self.lattice_constant * 2 / np.sqrt(3)
+            sidelength = 2 * np.sin(np.pi / 128)
+            template = regular_polygon(sidelength, 128)
+            symmetry = 128
         else:
             raise NotImplementedError()
 
