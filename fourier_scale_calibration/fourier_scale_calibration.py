@@ -1,6 +1,8 @@
 import numpy as np
 from scipy import ndimage
 
+from fourier_scale_calibration.simulate import superpose_deltas
+
 
 def rotate(points, angle, center=None):
     if center is None:
@@ -49,16 +51,51 @@ def square_crop(image):
 
 def windowed_fft(image):
     image = square_crop(image)
-
     x = np.fft.fftshift(np.fft.fftfreq(image.shape[-2]))
     y = np.fft.fftshift(np.fft.fftfreq(image.shape[-1]))
     r = np.sqrt(x[:, None] ** 2 + y[None] ** 2)
     m = cosine_window(r, .5, .33)
-    return np.fft.fft2(image * m)
+    f = np.fft.fft2(image * m)
+    return f
+
+
+def periodic_smooth_decomposition(I):
+    u = I.astype(np.float64)
+    v = u2v(u)
+    v_fft = np.fft.fftn(v)
+    s = v2s(v_fft)
+    s_i = np.fft.ifftn(s)
+    s_f = np.real(s_i)
+    p = u - s_f
+    return p, s_f
+
+
+def u2v(u):
+    v = np.zeros(u.shape, dtype=np.float64)
+
+    v[0, :] = np.subtract(u[-1, :], u[0, :])
+    v[-1, :] = np.subtract(u[0, :], u[-1, :])
+
+    v[:, 0] += np.subtract(u[:, -1], u[:, 0])
+    v[:, -1] += np.subtract(u[:, 0], u[:, -1])
+    return v
+
+
+def v2s(v_hat):
+    M, N = v_hat.shape
+
+    q = np.arange(M).reshape(M, 1).astype(v_hat.dtype)
+    r = np.arange(N).reshape(1, N).astype(v_hat.dtype)
+
+    den = (2 * np.cos(np.divide((2 * np.pi * q), M)) + 2 * np.cos(np.divide((2 * np.pi * r), N)) - 4)
+    s = np.divide(v_hat, den, out=np.zeros_like(v_hat), where=den != 0)
+    s[0, 0] = 0
+    return s
 
 
 def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=None, nbins_angular=None,
-                         return_positions=False, normalize=True):
+                         return_positions=False, normalize_radial=False, normalize_azimuthal=True,
+                         ps_decomp=True):
     if symmetry < 2:
         raise RuntimeError('symmetry must be 2 or greater')
 
@@ -79,7 +116,11 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
     if nbins_angular is None:
         nbins_angular = int(np.ceil((2 * np.pi / symmetry) / 0.01))
 
-    f = np.abs(windowed_fft(image))
+    if ps_decomp:
+        image, _ = periodic_smooth_decomposition(image)
+
+    f = np.abs(np.fft.fft2(image))
+
     if len(f.shape) == 3:
         f = f.mean(0)
 
@@ -97,19 +138,21 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
     unrolled = ndimage.map_coordinates(f, templates, order=1)
     unrolled = unrolled.reshape((len(template), len(scales), len(angles)))
 
-    if normalize:
-        unrolled = unrolled / unrolled.mean((2,), keepdims=True)
-
     unrolled = (unrolled).mean(0)
 
-    #print(scales.shape)
-    #print(unrolled.shape)
-    #import matplotlib.pyplot as plt
-    #plt.figure(figsize=(15, 15))
-    #plt.imshow(unrolled)
-    #plt.show()
+    if normalize_azimuthal:
+        unrolled = unrolled / unrolled.mean((1,), keepdims=True)
+
+    if normalize_radial:
+        unrolled = unrolled / unrolled.mean((0,), keepdims=True)
 
     p = np.unravel_index(np.argmax(unrolled), unrolled.shape)
+
+    # import matplotlib.pyplot as plt
+    # plt.figure()
+    # plt.imshow(unrolled)
+    # plt.plot(p[1],p[0],'ro')
+    # plt.show()
 
     if return_positions:
         r = np.linalg.norm(template, axis=1) * scales[p[0]]  # + min_scale
@@ -125,15 +168,34 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
 
 class FourierSpaceCalibrator:
 
-    def __init__(self, template, lattice_constant, min_sampling=None, max_sampling=None, normalize=True):
+    def __init__(self, template, lattice_constant, min_sampling=None, max_sampling=None,
+                 normalize_radial=False, normalize_azimuthal=True):
         self.template = template
         self.lattice_constant = lattice_constant
         self.min_sampling = min_sampling
         self.max_sampling = max_sampling
-        self.normalize = normalize
+        self.normalize_radial = normalize_radial
+        self.normalize_azimuthal = normalize_azimuthal
+        self._spots = None
 
-    def get_spots(self, image):
-        return self.calibrate(image, return_spots=True)[1]
+    def get_spots(self):
+        return self._spots
+
+    def get_mask(self, shape, sigma):
+        array = np.zeros(shape)
+        spots = self.get_spots()[:, ::-1]
+        superpose_deltas(spots, 0, array[None])
+        array = np.fft.fftshift(array)
+        x = np.fft.fftfreq(shape[0])
+        y = np.fft.fftfreq(shape[1])
+        z = np.exp(-(x[:, None] ** 2 + y[None] ** 2) * sigma ** 2 * 4)
+        array = np.fft.ifft2(np.fft.fft2(array) * z).real
+        return array
+
+    def fourier_filter(self, image, sigma):
+        spots = self.get_mask(image.shape, 4)
+        spots /= spots.max()
+        return np.fft.ifft2(np.fft.fft2(image) * spots).real
 
     def calibrate(self, image, return_spots=False):
         if self.template.lower() == 'hexagonal':
@@ -163,14 +225,15 @@ class FourierSpaceCalibrator:
         else:
             max_scale = k * self.max_sampling
 
+        scale, spots = detect_fourier_spots(image, template, symmetry, min_scale=min_scale, max_scale=max_scale,
+                                            return_positions=True, normalize_azimuthal=self.normalize_azimuthal,
+                                            normalize_radial=self.normalize_radial)
+
+        self._spots = spots
         if return_spots:
-            scale, spots = detect_fourier_spots(image, template, symmetry, min_scale=min_scale, max_scale=max_scale,
-                                                return_positions=return_spots, normalize=self.normalize)
             return scale / k, spots
         else:
-            scale = detect_fourier_spots(image, template, symmetry, min_scale=min_scale, max_scale=max_scale,
-                                         return_positions=False, normalize=self.normalize)
             return scale / k
 
     def __call__(self, image):
-        return self.calibrate(image, return_spots=False)
+        return self.calibrate(image)

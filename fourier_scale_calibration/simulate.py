@@ -29,6 +29,9 @@ def superpose_deltas(positions, z, array):
     array[z, (rows + 1) % shape[0], (cols + 1) % shape[1]] += (rows - positions[:, 0]) * (cols - positions[:, 1])
 
 
+
+
+
 def simulate_2d_material(atoms, probe_profile, sampling=None, shape=None, power_law=1.4):
     """
     Simulate a STEM image of a 2d material using the convolution approximation.
