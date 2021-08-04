@@ -1,7 +1,8 @@
 import numpy as np
 from scipy import ndimage
 
-from fourier_scale_calibration.simulate import superpose_deltas
+
+# from fourier_scale_calibration.simulate import superpose_deltas
 
 
 def rotate(points, angle, center=None):
@@ -63,7 +64,9 @@ def periodic_smooth_decomposition(I):
     u = I.astype(np.float64)
     v = u2v(u)
     v_fft = np.fft.fftn(v)
+
     s = v2s(v_fft)
+
     s_i = np.fft.ifftn(s)
     s_f = np.real(s_i)
     p = u - s_f
@@ -88,13 +91,15 @@ def v2s(v_hat):
     r = np.arange(N).reshape(1, N).astype(v_hat.dtype)
 
     den = (2 * np.cos(np.divide((2 * np.pi * q), M)) + 2 * np.cos(np.divide((2 * np.pi * r), N)) - 4)
-    s = np.divide(v_hat, den, out=np.zeros_like(v_hat), where=den != 0)
+
+    s = np.zeros_like(v_hat)
+    s[den != 0] = v_hat[den != 0] / den[den != 0]
     s[0, 0] = 0
     return s
 
 
 def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=None, nbins_angular=None,
-                         return_positions=False, normalize_radial=False, normalize_azimuthal=True,
+                         return_positions=False, normalize_radial=False, normalize_azimuthal=False,
                          ps_decomp=True):
     if symmetry < 2:
         raise RuntimeError('symmetry must be 2 or greater')
@@ -117,7 +122,7 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
         nbins_angular = int(np.ceil((2 * np.pi / symmetry) / 0.01))
 
     if ps_decomp:
-        image, _ = periodic_smooth_decomposition(image)
+       image, _ = periodic_smooth_decomposition(image)
 
     f = np.abs(np.fft.fft2(image))
 
@@ -141,7 +146,7 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
     unrolled = (unrolled).mean(0)
 
     if normalize_azimuthal:
-        unrolled = unrolled / unrolled.mean((1,), keepdims=True)
+      unrolled = unrolled / unrolled.mean((1,), keepdims=True)
 
     if normalize_radial:
         unrolled = unrolled / unrolled.mean((0,), keepdims=True)
@@ -149,9 +154,14 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
     p = np.unravel_index(np.argmax(unrolled), unrolled.shape)
 
     # import matplotlib.pyplot as plt
+    # from scipy.ndimage import gaussian_filter
     # plt.figure()
     # plt.imshow(unrolled)
-    # plt.plot(p[1],p[0],'ro')
+    # plt.show()
+    # plt.figure()
+    # plt.plot(unrolled.sum(1))
+    # #plt.imshow(gaussian_filter(f,2))
+    # #plt.plot(p[1],p[0],'ro')
     # plt.show()
 
     if return_positions:
@@ -198,6 +208,7 @@ class FourierSpaceCalibrator:
         return np.fft.ifft2(np.fft.fft2(image) * spots).real
 
     def calibrate(self, image, return_spots=False):
+
         if self.template.lower() == 'hexagonal':
             k = min(image.shape[-2:]) / self.lattice_constant * 2 / np.sqrt(3)
             template = regular_polygon(1., 6)
