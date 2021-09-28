@@ -122,7 +122,10 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
         nbins_angular = int(np.ceil((2 * np.pi / symmetry) / 0.01))
 
     if ps_decomp:
-       image, _ = periodic_smooth_decomposition(image)
+        if len(image.shape) == 3:
+            image, _ = np.mean([periodic_smooth_decomposition(i) for i in image], axis=0)
+        else:
+            image, _ = periodic_smooth_decomposition(image)
 
     f = np.abs(np.fft.fft2(image))
 
@@ -146,7 +149,7 @@ def detect_fourier_spots(image, template, symmetry, min_scale=None, max_scale=No
     unrolled = (unrolled).mean(0)
 
     if normalize_azimuthal:
-      unrolled = unrolled / unrolled.mean((1,), keepdims=True)
+        unrolled = unrolled / unrolled.mean((1,), keepdims=True)
 
     if normalize_radial:
         unrolled = unrolled / unrolled.mean((0,), keepdims=True)
