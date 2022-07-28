@@ -1,2 +1,2 @@
 # fourier-scale-calibration
-Calibrate images of periodic structures based using an automated Fourier space algorithm
+Calibrate images of periodic structures using an automated Fourier space algorithm
